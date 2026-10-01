@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<!-- saved from url=(0099)file:///C:/Users/vuolvil/OneDrive%20-%20Helsingin%20kaupunki%20kasvatus%20ja%20koulutus/Jouski.html -->
+<html lang="fi"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PASKA PELI - TUHO EDITION</title>
+    <style>
+        body {
+            margin: 0; padding: 0;
+            background-color: #4a3525;
+            display: flex; justify-content: center; align-items: center;
+            height: 100vh; color: #fff;
+            font-family: 'Comic Sans MS', cursive, sans-serif;
+            overflow: hidden;
+        }
+        #gameContainer { text-align: center; position: relative; }
+        h1 { color: #ffcc00; text-shadow: 3px 3px 0px #000; margin: 0 0 5px 0; }
+        #ui {
+            display: flex; justify-content: center;
+            background: #2b1d11; padding: 10px;
+            border: 3px solid #ffcc00; font-size: 22px; margin-bottom: 10px;
+        }
+        canvas { background-color: #8b5a2b; border: 6px solid #5c3a21; display: block; }
+        .insult { margin-top: 10px; font-size: 16px; color: #ff4444; font-weight: bold; min-height: 24px; }
+        
+        /* KARKAAVAT POP-UPIT */
+        #ad-popup, #quiz-popup {
+            display: none; position: absolute;
+            top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: 320px; background: #fff; color: #000;
+            border: 5px solid #ffcc00; padding: 20px;
+            box-shadow: 0 0 50px rgba(0,0,0,0.9); z-index: 100; border-radius: 8px;
+        }
+        #quiz-popup { background: #111; color: #00ff00; border-color: #00ff00; }
+        
+        .runaway-btn {
+            position: absolute; background: red; color: white;
+            border: none; cursor: pointer; font-weight: bold; padding: 8px 12px;
+        }
+        .quiz-btn {
+            background: #333; color: white; border: 2px solid #555;
+            padding: 8px; margin: 5px; width: 90%; cursor: pointer;
+            position: relative; transition: top 0.1s, left 0.1s;
+        }
+        #flash {
+            display: none; position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: white; z-index: 200; pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+
+<div id="flash"></div>
+
+<div id="gameContainer">
+    <h1>💩 PASKA PELI 💩</h1>
+    <div id="ui">
+        <div>Aika hukattu: <span id="scoreText" style="color: #ff0000;">2</span>s</div>
+    </div>
+    
+    <canvas id="gameCanvas" width="600" height="450"></canvas>
+    <div id="insultText" class="insult">Koko kasvaa... Väistäminen käy mahdottomaksi!</div>
+
+    <!-- MAINOS JOSSA KARKAAVA SULKUNAPPI -->
+    <div id="ad-popup" style="display: block;">
+        <button id="ad-close" class="runaway-btn" style="top: 27.2918px; right: 36.7868px;">X</button>
+        <h3 style="color:rgba(70, 0, 0, 0.591); margin-top:20px; text-align:center;">Haakirdraama</h3>
+        <p style="text-align:center; font-size:14px;">Tulossa elokuvateattereihin ei koskaan</p>
+    </div>
+
+    <!-- KYSYMYS JOSSA KARKAAVAT VAIHTOEHDOT -->
+    <div id="quiz-popup">
+        <h3 id="question-title">KYSYMYS!</h3>
+        <div id="quiz-options"></div>
+    </div>
+</div>
+
+<script>
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+
+const scoreText = document.getElementById("scoreText");
+const insultText = document.getElementById("insultText");
+const adPopup = document.getElementById("ad-popup");
+const quizPopup = document.getElementById("quiz-popup");
+const flashDiv = document.getElementById("flash");
+const adCloseBtn = document.getElementById("ad-close");
+
+let score = 0;
+let gameOver = false;
+let gamePaused = false;
+let startTime = Date.now();
+
+let controlsInverted = false;
+let nextControlSwitch = 5;
+
+// Pelaaja (Koko kasvaa scoren mukaan!)
+const player = { x: 300, y: 390, baseRadius: 18, radius: 18, speed: 8, color: "#5c3a21" };
+const obstacles = [];
+const obstacleEmojis = ["🪰", "🍌", "✉️", "🧻", "💩", "🤮"];
+
+// Näppäimet
+const keys = {};
+window.addEventListener("keydown", e => keys[e.key.toLowerCase()] = true);
+window.addEventListener("keyup", e => keys[e.key.toLowerCase()] = false);
+
+const quizQuestions = [
+    { q: "Oletko varma ettei peli kaadu?", a: ["Kyllä", "En", "Ehkä"], correct: 1 },
+    { q: "Miksi painikkeet juoksevat?", "a": ["Koska peli on paska", "Bugi", "En tiedä"], correct: 0 }
+];
+
+// Tehdään sulkunapista karkaava hiiren lähestyessä
+adCloseBtn.addEventListener("mouseover", () => {
+    adCloseBtn.style.top = Math.random() * 150 + "px";
+    adCloseBtn.style.right = Math.random() * 250 + "px";
+});
+adCloseBtn.addEventListener("click", () => {
+    adPopup.style.display = "none";
+    gamePaused = false;
+});
+
+function spawnObstacle() {
+    if (Math.random() < 0.07 && obstacles.length < 25) {
+        obstacles.push({
+            x: Math.random() * (canvas.width - 40) + 20,
+            y: -20,
+            text: obstacleEmojis[Math.floor(Math.random() * obstacleEmojis.length)],
+            speed: Math.random() * 7 + 4
+        });
+    }
+}
+
+function update() {
+    if (gameOver || gamePaused) return;
+
+    score = Math.floor((Date.now() - startTime) / 1000);
+    scoreText.innerText = score;
+
+    // HAHMO KASVAA JÄTTILÄISEKSI
+    player.radius = player.baseRadius + (score * 1.5);
+
+    if (score >= nextControlSwitch) {
+        controlsInverted = !controlsInverted;
+        nextControlSwitch += Math.floor(Math.random() * 4) + 4;
+    }
+
+    let moveLeft = keys["arrowleft"] || keys["a"];
+    let moveRight = keys["arrowright"] || keys["d"];
+
+    if (controlsInverted) {
+        let temp = moveLeft; moveLeft = moveRight; moveRight = temp;
+    }
+
+    if (moveLeft) player.x -= player.speed;
+    if (moveRight) player.x += player.speed;
+
+    player.x = Math.max(player.radius, Math.min(canvas.width - player.radius, player.x));
+
+    spawnObstacle();
+    for (let i = obstacles.length - 1; i >= 0; i--) {
+        const obs = obstacles[i];
+        obs.y += obs.speed;
+
+        let dist = Math.hypot(player.x - obs.x, player.y - obs.y);
+        if (dist < player.radius + 10) {
+            endGame("Osuit esteeseen! Läskikoko koitui kohtaloksesi.meni paskasti");
+        }
+
+        if (obs.y > canvas.height + 20) obstacles.splice(i, 1);
+    }
+
+    // ÄRSYTYKSET
+    if (Math.random() < 0.003) triggerAd();
+    else if (Math.random() < 0.002) triggerQuiz();
+    else if (Math.random() < 0.004) triggerFlash();
+}
+
+function draw() {
+    ctx.fillStyle = "#8b5a2b";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.fillStyle = "#5c3a21";
+    ctx.fillRect(0, canvas.height - 30, canvas.width, 30);
+
+    // Läskityvä Pelaaja
+    ctx.beginPath();
+    ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
+    ctx.fillStyle = player.color;
+    ctx.fill();
+
+    // Silmät (kasvavat mukana)
+    let eyeOffset = player.radius * 0.3;
+    let eyeRadius = Math.max(3, player.radius * 0.15);
+    ctx.fillStyle = "#fff";
+    ctx.beginPath(); 
+    ctx.arc(player.x - eyeOffset, player.y - eyeOffset, eyeRadius, 0, Math.PI * 2); 
+    ctx.arc(player.x + eyeOffset, player.y - eyeOffset, eyeRadius, 0, Math.PI * 2); 
+    ctx.fill();
+    
+    ctx.fillStyle = "#000";
+    ctx.beginPath(); 
+    ctx.arc(player.x - eyeOffset, player.y - eyeOffset, eyeRadius/2, 0, Math.PI * 2); 
+    ctx.arc(player.x + eyeOffset, player.y - eyeOffset, eyeRadius/2, 0, Math.PI * 2); 
+    ctx.fill();
+
+    // Esteet
+    ctx.font = "26px Arial";
+    for (let obs of obstacles) {
+        ctx.fillText(obs.text, obs.x - 12, obs.y + 10);
+    }
+}
+
+function triggerFlash() {
+    flashDiv.style.display = "block";
+    setTimeout(() => { flashDiv.style.display = "none"; }, 600);
+}
+
+function triggerAd() {
+    gamePaused = true;
+    adPopup.style.display = "block";
+    adCloseBtn.style.top = "10px"; adCloseBtn.style.right = "10px"; // nollataan paikka
+}
+
+function triggerQuiz() {
+    gamePaused = true;
+    quizPopup.style.display = "block";
+    
+    const qData = quizQuestions[Math.floor(Math.random() * quizQuestions.length)];
+    document.getElementById("question-title").innerText = qData.q;
+    
+    const optionsDiv = document.getElementById("quiz-options");
+    optionsDiv.innerHTML = "";
+    
+    qData.a.forEach((opt, index) => {
+        const btn = document.createElement("button");
+        btn.className = "quiz-btn";
+        btn.innerText = opt;
+        
+        // Tehdään kysymysnapeistakin karkaavia hiiren osuessa
+        btn.addEventListener("mouseover", () => {
+            btn.style.left = (Math.random() * 40 - 20) + "px";
+            btn.style.top = (Math.random() * 30 - 15) + "px";
+        });
+        
+        btn.onclick = () => {
+            if (index === qData.correct) {
+                quizPopup.style.display = "none";
+                gamePaused = false;
+            } else {
+                endGame("Vastasit väärin paenneeseen kysymykseen!");
+            }
+        };
+        optionsDiv.appendChild(btn);
+    });
+}
+
+function endGame(msg) {
+    gameOver = true;
+    alert("HÄVISIT!\n\nTulos: " + score + " sekuntia.\n" + msg);
+    document.location.reload();
+}
+
+function gameLoop() {
+    update();
+    draw();
+    requestAnimationFrame(gameLoop);
+}
+
+gameLoop();
+</script>
+
+
+
+</body></html>
